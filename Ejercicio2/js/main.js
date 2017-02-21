@@ -1,71 +1,98 @@
 /* ******************************************** */
-/* *                                            */
-/* * Author: David Santos                       */
-/* * Date: Feb 2017                             */
-/* * Description: Javascript code test          */
-/* *                                            */
+/* *  											*/
+/* * Author: David Santos						*/
+/* * Date: Feb 2017								*/
+/* * Description: Javascript code test			*/
+/* * 											*/
 /* ******************************************** */
 
-var data_map = {}; // Ordered map. Key: cat - value: date_map
-var dates_map = {}; // Ordered map. Key: date(string) - value: Date (object)
+var data_map = {}; // Map - Key: cat - value: date_map
+var dates_map = {}; // Ordered map - Key: date(string) - value: Date (object)
+var cat_array = [];  
+
+var NUM_AJAX_CALLS = 3;
+var barrier_counter = NUM_AJAX_CALLS;
 
 $(function() {
 	
-	// Llamadas ajax en secuencia para evitar problemas de concurrencia al combinar los datos
 	$.ajax({
 		url: "http://s3.amazonaws.com/logtrust-static/test/test/data1.json",
 		async: true,
 		dataType: "json",
 		success: function(data) {
+
 			$.each(data, function(index, item) {
 
 				add_data(new Date(item.d), item.cat.toUpperCase(), item.value);
 				
 			});
-			
-			$.ajax({
-				url: "http://s3.amazonaws.com/logtrust-static/test/test/data2.json",
-				async: true,
-				dataType: "json",
-				success: function(data) {
-					$.each(data, function(index, item) {
-
-						add_data(new Date(item.myDate), item.categ.toUpperCase(), item.val);
-
-					});
-					
-					$.ajax({
-						url: "http://s3.amazonaws.com/logtrust-static/test/test/data3.json",
-						async: true,
-						dataType: "json",
-						success: function(data) {
-							$.each(data, function(index, item) {
-
-								var date = item.raw.match(/(19|20)\d\d-(0[1-9]|1[012])-(0[1-9]|[12][0-9]|3[01])/);
-								var cat = item.raw.match(/#cat \d#/i);
-								
-								add_data(new Date(date[0]), cat[0].toUpperCase().substr(1, 5), item.val);
-							});
-							
-							draw_chart1();
-							draw_chart2();
-						},
-						error: function(jqxhr, textStatus, error) {
-							ajax_error(3, textStatus, error);				
-						}
-					}); // ajax3
-				},
-				error: function(jqxhr, textStatus, error) {
-					ajax_error(2, textStatus, error);				
-				}
-			}); // ajax2 
 		},
-		error: function(jqxhr, textStatus, error) {
-			ajax_error(1, textStatus, error);
-		}
-	}); // ajax1
+		complete: barrier_update,		
+		error: ajax_error
+	});
+	
+	$.ajax({
+		url: "http://s3.amazonaws.com/logtrust-static/test/test/data2.json",
+		async: true,
+		dataType: "json",
+		success: function(data) {
 
+			$.each(data, function(index, item) {
+	
+				add_data(new Date(item.myDate), item.categ.toUpperCase(), item.val);
+				
+			});
+		},
+		complete: barrier_update,
+		error: ajax_error
+	});
+	
+	$.ajax({
+		url: "http://s3.amazonaws.com/logtrust-static/test/test/data3.json",
+		async: true,
+		dataType: "json",
+		success: function(data) {
+
+			$.each(data, function(index, item) {
+
+				var date = item.raw.match(/(19|20)\d\d-(0[1-9]|1[012])-(0[1-9]|[12][0-9]|3[01])/);
+				var cat = item.raw.match(/#cat \d#/i);
+				
+				add_data(new Date(date[0]), cat[0].toUpperCase().substring(1, cat[0].lastIndexOf("#")), item.val);
+				
+			});
+			
+		},
+		complete: barrier_update,
+		error: ajax_error				
+	});
 });
+
+// Esta función se asegura de que antes de pintar las gráficas todos los datos se han cargado correctamente
+function barrier_update(jqXHR, textStatus) {
+
+	if (textStatus == "success") {
+
+		barrier_counter--;
+		
+		if (!barrier_counter) {
+			
+			// Todos los datos de todas las series han sido cargados
+
+			// Ordenamos lista de categorías
+			for (cat in data_map) {
+				cat_array.push(cat);
+			}
+			cat_array.sort() 
+			
+			draw_chart1();
+			draw_chart2();
+		}
+	}
+	else {
+		$("#container1").text("Ha habido un error al cargar los datos");
+	}
+}
 
 // Para combinar los datos de las diferentes series esta función añade los datos obtenidos
 // en las correspondientes estructuras de datos 
@@ -93,6 +120,7 @@ function add_data(date, cat, value) {
 		}
 		else {
 			// Insertamos nueva fecha
+			// Las fechas se insertan ordenadas porque key_date sólo contiene caracteres numéricos
 			date_map[key_date] = obj;
 			date_map.num_entries++;
 		}
@@ -114,31 +142,20 @@ function add_data(date, cat, value) {
 }
 
 function get_key(date) {
-	return date.getFullYear().toString() + ('0' + (date.getMonth() + 1)).slice(-2) + ('0' + date.getDate()).slice(-2);
+	return date.getFullYear().toString() + 
+		('0' + (date.getMonth() + 1)).slice(-2) + 
+		('0' + date.getDate()).slice(-2);
 }
 
-function ajax_error(id_serie, textStatus, error) {
+function ajax_error(jqxhr, textStatus, error) {
 	try
 	{
 	    var err = textStatus + ", " + error;
-	    console.error( "Request Failed: " + err + " for serie " + id_serie);
+	    console.error( "Request Failed: " + err);
 	}
 	catch (err)
 	{
 	}
-}
-
-function get_object_size(obj) {
-	
-	var count = 0;
-	
-	for (var key in obj) {
-		if (obj.hasOwnProperty(key)) {
-			count++;		
-		}
-	}
-	
-	return count;
 }
 
 function draw_chart1() {
@@ -172,12 +189,14 @@ function draw_chart1() {
 			   
 			   // Inicializamos los elementos de la variable series de highcharts
 			   var series_by_cat = {};
-			   for (cat in data_map) {
-				   //if (data_map.hasOwnProperty(cat)) {
+			   for (i = 0; i < cat_array.length; i++) {
+				   
+				   var cat = cat_array[i];
+				   
 				   series_by_cat[cat] = {};
 				   series_by_cat[cat].name = cat;
 				   series_by_cat[cat].data = [];
-				   //}
+				   
 			   }
 
 			   // Recorremos todas las fechas que se han encontrado en las tres series y
@@ -193,7 +212,6 @@ function draw_chart1() {
 				   xAxis.categories.push(day + " " + month);
 				   
 				   for (cat in data_map) {
-					   //if (data_map.hasOwnProperty(cat)) {
 					   var date_map = data_map[cat];
 					   
 					   var key_date = get_key(date); 
@@ -202,10 +220,9 @@ function draw_chart1() {
 						   series_by_cat[cat].data.push(date_map[key_date].value);
 					   }
 					   else {
-						   // Para esta fecha y categoría no existen datos, añadimos un valor nulo
-						   series_by_cat[cat].data.push(null);
+						   // Para esta fecha y categoría no existen datos, añadimos el valor 0
+						   series_by_cat[cat].data.push(0);
 					   }
-					   
 				   }
 			   }
 			   
@@ -267,10 +284,9 @@ function draw_chart2()
 		   
 		   
 		   // Generamos datos para highchart
-		   // TO DO: no existen datos para todas las fechas en todas las categorías, 
-		   // tal vez habría que seleccionar un rango de fechas común para calcular los agregados  
-		   for (cat in data_map) {
-
+		   for (i = 0; i < cat_array.length; i++) {
+			   var cat = cat_array[i];
+		   
 			   var data_array = [];
 			   
 			   data_array.push(cat);
